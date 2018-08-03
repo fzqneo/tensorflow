@@ -1506,6 +1506,7 @@ struct ExecutorState::AsyncState {
   }
 };
 
+/* zf: this is the function scheduled to the thread pool, so it runs in a worker thread. */
 void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   const GraphView& gview = impl_->gview_;
   TaggedNodeSeq ready;
@@ -1542,9 +1543,20 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   EntryVector outputs;
   bool completed = false;
   inline_ready.push_back(tagged_node);
+
+  double granularity = 0.011;
+  double allocated_slice = 0.005;
+  double time_counter = 0.0;
+
   while (!inline_ready.empty()) {
+	// zf: we can intercept here to add sleep time.
+	auto tic = std::chrono::system_clock::now();
+
     tagged_node = inline_ready.front();
     inline_ready.pop_front();
+
+	//LOG(INFO) << "Running node: " << tagged_node.node->name();
+
     const Node* node = tagged_node.node;
     FrameState* input_frame = tagged_node.input_frame;
     const int64 input_iter = tagged_node.input_iter;
@@ -1604,6 +1616,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
         }
         MaybeMarkCompleted(input_frame, input_iter, id);
         // Continue to process the nodes in 'inline_ready'.
+		// zf: inline_ready may add new nodes inside ScheduleReady()
         completed = NodeDone(s, item.node, ready, stats, &inline_ready);
         continue;
       }
@@ -1715,7 +1728,28 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       // Postprocess.
       completed = NodeDone(s, item.node, ready, stats, &inline_ready);
     }
+
+	auto toc = std::chrono::system_clock::now();
+	std::chrono::duration<double> node_time_sec = toc - tic;
+	//LOG(INFO) << "Node " << tagged_node.node->name() << "takes " << node_time_sec.count() << " seconds";
+	time_counter += node_time_sec.count();
+	if (time_counter >= allocated_slice)
+	{
+		auto st = granularity - allocated_slice;
+		LOG(INFO) << "Timer = " << time_counter << ". Sleeping for " << st;
+		std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
+		time_counter = 0.0;
+	}
+
   }  // while !inline_ready.empty()
+
+  if (time_counter < allocated_slice)
+  {
+	  // st / time_counter = (granularity - allocated_slice) / allocated_slice
+	  auto st = time_counter * (granularity - allocated_slice) / allocated_slice;
+	  LOG(INFO) << "End of loop timer = " << time_counter << ". Sleeping for " << st;
+	  std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
+  }
 
   // This thread of computation is done if completed = true.
   if (completed) Finish();
@@ -2099,6 +2133,14 @@ bool ExecutorState::NodeDone(const Status& s, const Node* node,
   return completed;
 }
 
+/* zf: Here starts scheduling nodes to execute by the thread pool.
+The function is run on main thread or worker thread.
+It's called when the graph is scheduled for execution initially. 
+It's also called by NodeDone() by Process(), in the worker thread, when a node finishes execution and triggers some downstream nodes being ready to execute. 
+When it's called in NodeDone(), inline_ready will be non null.
+Depending on these newly-ready nodes are expensive or not, it may add them to inline_ready -- in this case, meaning they will be executed in the enclosing Process() call,
+a.k.a. the same "job" -- or schedule them as new jobs to the thread pool.
+*/
 void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
                                   TaggedNodeReadyQueue* inline_ready) {
   if (ready.empty()) return;

@@ -1083,6 +1083,8 @@ Status DirectSession::CreateExecutors(
                                   run_state_args, &ek->input_types,
                                   &ek->output_types));
 
+  LOG(INFO) << "The created graphs has " << graphs.size() << " paritions";
+
   if (run_state_args->is_partial_run) {
     ek->graph = std::move(run_state_args->graph);
     std::unordered_set<StringPiece, StringPieceHasher> names;

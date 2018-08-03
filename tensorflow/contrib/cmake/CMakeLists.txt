@@ -313,12 +313,20 @@ if (tensorflow_ENABLE_GPU)
   try_compile(CUDA_TEST_COMPILE_C
     ${CMAKE_CURRENT_BINARY_DIR}/tests/cuda
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda/compatibility_test.c
-    CMAKE_FLAGS -DINCLUDE_DIRECTORIES=${CUDA_INCLUDE_DIRS})
+    CMAKE_FLAGS -DINCLUDE_DIRECTORIES=${CUDA_INCLUDE_DIRS}
+	OUTPUT_VARIABLE CUDA_TEST_COMPILE_C_OUT)
   try_compile(CUDA_TEST_COMPILE_CXX
     ${CMAKE_CURRENT_BINARY_DIR}/tests/cuda
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cuda/compatibility_test.cc
-    CMAKE_FLAGS -DINCLUDE_DIRECTORIES=${CUDA_INCLUDE_DIRS})
+    CMAKE_FLAGS -DINCLUDE_DIRECTORIES=${CUDA_INCLUDE_DIRS}
+	OUTPUT_VARIABLE CUDA_TEST_COMPILE_CXX_OUT)
   if(NOT (CUDA_TEST_COMPILE_C AND CUDA_TEST_COMPILE_CXX))
+  	message("=============================================================================")
+	message("CMAKE_MAKE_PROGRAM: ${CMAKE_MAKE_PROGRAM}")
+	message("=============================================================================")
+	message("CUDA_TEST_COMPILE_C_OUT: ${CUDA_TEST_COMPILE_C_OUT}")
+	message("=============================================================================")
+	message("CUDA_TEST_COMPILE_CXX_OUT: ${CUDA_TEST_COMPILE_CXX_OUT}")
     message(FATAL_ERROR "Selected compiler (or version) is not supported for CUDA")
   endif()
 
