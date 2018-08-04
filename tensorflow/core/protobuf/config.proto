@@ -392,6 +392,10 @@ message RunOptions {
   // Enabling this option can slow down the Run() call.
   bool report_tensor_allocations_upon_oom = 7;
 
+  bool enable_fine_grained_schedule = 99;
+  double schedule_granularity = 100;
+  double allocated_time_slice = 101;
+
   reserved 4;
 }
 

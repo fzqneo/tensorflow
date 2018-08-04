@@ -466,6 +466,14 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
   args.step_container = &run_state.step_container;
   args.sync_on_finish = sync_on_finish_;
 
+  args.enable_fine_grained_schedule = run_options.enable_fine_grained_schedule();
+  if (run_options.enable_fine_grained_schedule())
+  {
+	  args.schedule_granularity = run_options.schedule_granularity();
+	  args.allocated_time_slice = run_options.allocated_time_slice();
+	  LOG(WARNING) << "Fine grained schedule is enabled. Granularity = " << args.schedule_granularity << " Allocated time slice = " << args.allocated_time_slice;
+  }
+
   const bool do_trace = (run_options.trace_level() > RunOptions::NO_TRACE);
 
   bool update_cost_model = false;
@@ -546,6 +554,7 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
         SchedClosure(device_thread_pool, std::move(c));
       };
     }
+	// zf: here schedules the initial ready nodes to thread pool
     item.executor->RunAsync(args, barrier->Get());
   }
 

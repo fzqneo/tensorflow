@@ -803,6 +803,10 @@ class ExecutorState {
   void RunAsync(Executor::DoneCallback done);
 
  private:
+  // zf: for fine-grained scheduling
+	const bool enable_fine_grained_schedule_;
+	const double schedule_granularity_;
+	const double allocated_time_slice_;
   // Either a tensor pointer (pass-by-reference) or a tensor (pass-by-value).
   // TODO(yuanbyu): A better way to do "has_value"?
   struct Entry {
@@ -1323,7 +1327,11 @@ ExecutorState::ExecutorState(const Executor::Args& args, ExecutorImpl* impl)
       cancellation_manager_(args.cancellation_manager),
       runner_(args.runner),
       sync_on_finish_(args.sync_on_finish),
-      num_outstanding_ops_(0) {
+      num_outstanding_ops_(0),
+		enable_fine_grained_schedule_(args.enable_fine_grained_schedule),
+		schedule_granularity_(args.schedule_granularity),
+		allocated_time_slice_(args.allocated_time_slice)
+{
   // We start the entire execution in iteration 0 of the root frame
   // so let us create the root frame and the state for iteration 0.
   // We assume root_frame_->frame_name.empty().
@@ -1544,8 +1552,6 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   bool completed = false;
   inline_ready.push_back(tagged_node);
 
-  double granularity = 0.011;
-  double allocated_slice = 0.005;
   double time_counter = 0.0;
 
   while (!inline_ready.empty()) {
@@ -1733,9 +1739,9 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
 	std::chrono::duration<double> node_time_sec = toc - tic;
 	//LOG(INFO) << "Node " << tagged_node.node->name() << "takes " << node_time_sec.count() << " seconds";
 	time_counter += node_time_sec.count();
-	if (time_counter >= allocated_slice)
+	if (enable_fine_grained_schedule_ && time_counter >= allocated_time_slice_)
 	{
-		auto st = granularity - allocated_slice;
+		auto st = schedule_granularity_ - allocated_time_slice_;
 		LOG(INFO) << "Timer = " << time_counter << ". Sleeping for " << st;
 		std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
 		time_counter = 0.0;
@@ -1743,10 +1749,10 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
 
   }  // while !inline_ready.empty()
 
-  if (time_counter < allocated_slice)
+  if (enable_fine_grained_schedule_ && time_counter < allocated_time_slice_)
   {
 	  // st / time_counter = (granularity - allocated_slice) / allocated_slice
-	  auto st = time_counter * (granularity - allocated_slice) / allocated_slice;
+	  auto st = time_counter * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
 	  LOG(INFO) << "End of loop timer = " << time_counter << ". Sleeping for " << st;
 	  std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
   }

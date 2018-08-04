@@ -103,6 +103,10 @@ class Executor {
                                  OpKernelContext* ctx)>
         NodeOutputsCallback;
     NodeOutputsCallback node_outputs_cb = nullptr;
+
+	bool enable_fine_grained_schedule = false;
+	double schedule_granularity;
+	double allocated_time_slice;
   };
   typedef std::function<void(const Status&)> DoneCallback;
   virtual void RunAsync(const Args& args, DoneCallback done) = 0;
