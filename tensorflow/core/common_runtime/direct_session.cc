@@ -426,6 +426,7 @@ Status DirectSession::DecorateAndPublishGraphForDebug(
   return Status::OK();
 }
 
+// zf: here's where we create executors and bind thread functions
 Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
                                   CallFrameInterface* call_frame,
                                   ExecutorsAndKeys* executors_and_keys,
@@ -466,6 +467,7 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
   args.step_container = &run_state.step_container;
   args.sync_on_finish = sync_on_finish_;
 
+  // zf: copy fine grained scheduling option from Python API
   args.enable_fine_grained_schedule = run_options.enable_fine_grained_schedule();
   if (run_options.enable_fine_grained_schedule())
   {
@@ -549,10 +551,12 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
         item.device->tensorflow_device_thread_pool();
     if (!device_thread_pool) {
       args.runner = default_runner;
+	  LOG(WARNING) << "Using default_runner. Thread num :" << pool->NumThreads();
     } else {
       args.runner = [this, device_thread_pool](Executor::Args::Closure c) {
         SchedClosure(device_thread_pool, std::move(c));
       };
+	  LOG(WARNING) << "Using device thread pool. Thread num: " << device_thread_pool->CurrentThreadId();
     }
 	// zf: here schedules the initial ready nodes to thread pool
     item.executor->RunAsync(args, barrier->Get());

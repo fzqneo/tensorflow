@@ -1552,8 +1552,6 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   bool completed = false;
   inline_ready.push_back(tagged_node);
 
-  double time_counter = 0.0;
-
   while (!inline_ready.empty()) {
 	// zf: we can intercept here to add sleep time.
 	auto tic = std::chrono::system_clock::now();
@@ -1586,6 +1584,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
     if (stats_collector_ && !tagged_node.is_dead) {
       // track allocations if and only if we are collecting statistics
       params.track_allocations = true;
+	  // zf: the stats can be used to track time?
       stats = new NodeExecStatsWrapper;
       stats->stats()->set_node_name(node->name());
       nodestats::SetScheduled(stats, scheduled_usec);
@@ -1636,6 +1635,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       params.forward_from_array = nullptr;  // later: item.forward_from();
 
       if (item.kernel_is_async) {
+		//LOG(WARNING) << "Async! " <<item.node->name();
         // Asynchronous computes.
         AsyncOpKernel* async = item.kernel->AsAsync();
         DCHECK(async != nullptr);
@@ -1643,6 +1643,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
         AsyncState* state =
             new AsyncState(params, tagged_node, &item, first_input, stats);
 
+		// zf: if the node is async, the done code is here.
         auto done = [this, state]() {
           Device* device = impl_->params_.device;
           NodeExecStatsWrapper* stats = state->stats;  // Shorthand
@@ -1682,10 +1683,12 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
             device->ConsumeListOfAccessedTensors(state->ctx.op_device_context(),
                                                  accessed);
           }
+
           const bool completed =
               NodeDone(s, state->item->node, ready, stats, nullptr);
           delete state;
           if (completed) Finish();
+
         };
         nodestats::SetOpStart(stats);
         device->ComputeAsync(async, &state->ctx, done);
@@ -1731,31 +1734,32 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       if (stats) {
         scheduled_usec = nodestats::NowInUsec();
       }
+
       // Postprocess.
       completed = NodeDone(s, item.node, ready, stats, &inline_ready);
     }
+	
 
-	auto toc = std::chrono::system_clock::now();
-	std::chrono::duration<double> node_time_sec = toc - tic;
-	//LOG(INFO) << "Node " << tagged_node.node->name() << "takes " << node_time_sec.count() << " seconds";
-	time_counter += node_time_sec.count();
-	if (enable_fine_grained_schedule_ && time_counter >= allocated_time_slice_)
+
+	if (enable_fine_grained_schedule_) // && time_counter >= allocated_time_slice_)
 	{
-		auto st = schedule_granularity_ - allocated_time_slice_;
+		device->Sync();
+		auto toc = std::chrono::system_clock::now();
+		std::chrono::duration<double> node_time_sec = toc - tic;
+		//LOG(INFO) << "Node " << tagged_node.node->name() << "takes " << node_time_sec.count() << " seconds";
+		auto time_counter = node_time_sec.count();
+		if (node_time_sec.count() > allocated_time_slice_)
+		{
+			LOG(WARNING) << "[Sync] " << node->name() << " => " << node_time_sec.count() << "ASync: " << item.kernel_is_async << " Debug: " << node->DebugString();
+		}
+		auto st = time_counter * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
+		st = std::min(st, schedule_granularity_);
+		//auto st = schedule_granularity_ - allocated_time_slice_;
 		LOG(INFO) << "Timer = " << time_counter << ". Sleeping for " << st;
 		std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
-		time_counter = 0.0;
 	}
 
   }  // while !inline_ready.empty()
-
-  if (enable_fine_grained_schedule_ && time_counter < allocated_time_slice_)
-  {
-	  // st / time_counter = (granularity - allocated_slice) / allocated_slice
-	  auto st = time_counter * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
-	  LOG(INFO) << "End of loop timer = " << time_counter << ". Sleeping for " << st;
-	  std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
-  }
 
   // This thread of computation is done if completed = true.
   if (completed) Finish();
