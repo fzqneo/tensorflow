@@ -1552,6 +1552,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   bool completed = false;
   inline_ready.push_back(tagged_node);
 
+  double fgs_timer = 0.0f;	// fine grained timer
   while (!inline_ready.empty()) {
 	// zf: we can intercept here to add sleep time.
 	auto tic = std::chrono::system_clock::now();
@@ -1740,26 +1741,35 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
     }
 	
 
-
 	if (enable_fine_grained_schedule_) // && time_counter >= allocated_time_slice_)
 	{
 		device->Sync();
 		auto toc = std::chrono::system_clock::now();
 		std::chrono::duration<double> node_time_sec = toc - tic;
 		//LOG(INFO) << "Node " << tagged_node.node->name() << "takes " << node_time_sec.count() << " seconds";
-		auto time_counter = node_time_sec.count();
-		if (node_time_sec.count() > allocated_time_slice_)
+		fgs_timer += node_time_sec.count();
+		if (fgs_timer > allocated_time_slice_)
 		{
-			LOG(WARNING) << "[Sync] " << node->name() << " => " << node_time_sec.count() << "ASync: " << item.kernel_is_async << " Debug: " << node->DebugString();
+			//LOG(WARNING) << "[Sync] " << node->name() << " => " << node_time_sec.count() << "ASync: " << item.kernel_is_async << " Debug: " << node->DebugString();
+			//auto st = fgs_timer * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
+			//st = std::min(st, schedule_granularity_);
+			auto st = schedule_granularity_ - allocated_time_slice_;
+			LOG(INFO) << "Timer = " << fgs_timer << ". Sleeping for " << st;
+			std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
+			fgs_timer = 0.0;
 		}
-		auto st = time_counter * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
-		st = std::min(st, schedule_granularity_);
-		//auto st = schedule_granularity_ - allocated_time_slice_;
-		LOG(INFO) << "Timer = " << time_counter << ". Sleeping for " << st;
-		std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
 	}
 
   }  // while !inline_ready.empty()
+
+  if (enable_fine_grained_schedule_ && fgs_timer <= allocated_time_slice_)
+  {
+	  //auto st = schedule_granularity_ - allocated_time_slice_;
+	  auto st = fgs_timer * (schedule_granularity_ - allocated_time_slice_) / allocated_time_slice_;
+	  st = std::min(st, schedule_granularity_);
+	  LOG(INFO) << "End of Loop Timer = " << fgs_timer << ". Sleeping for " << st;
+	  std::this_thread::sleep_for(std::chrono::milliseconds(long(1000 * st)));
+  }
 
   // This thread of computation is done if completed = true.
   if (completed) Finish();
